@@ -30,7 +30,7 @@ from utils.general import labels_to_class_weights, increment_path, labels_to_ima
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
     check_requirements, print_mutation, set_logging, one_cycle, colorstr
 from utils.google_utils import attempt_download
-from utils.loss import ComputeLoss, ComputeLossOTA
+from utils.original_loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def train(hyp, opt, device, tb_writer=None):
+    teacher_ckpt = torch.load('yolov7x.pt', map_location=device)
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
@@ -95,14 +96,15 @@ def train(hyp, opt, device, tb_writer=None):
         model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
 
     if opt.teacher_weight:
+        print("teacher weights:", opt.teacher_weight)
         teacher_weight = opt.teacher_weight
         with torch_distributed_zero_first(rank):
             teacher_weight = attempt_download(teacher_weight)  # download if not found locally
-        teacher_ckpt = torch.load(teacher_weight, map_location=device) 
+        # teacher_ckpt = torch.load(teacher_weight, map_location=device) # load checkpoint
         teacher_model = Model(opt.cfg or teacher_ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
        
         logger.info(f'Load teacher model from {teacher_weight}')  # report
-
+    
     with torch_distributed_zero_first(rank):
         check_dataset(data_dict)  # check
     train_path = data_dict['train']
@@ -295,6 +297,7 @@ def train(hyp, opt, device, tb_writer=None):
             teacher_model = DDP(teacher_model, device_ids=[opt.local_rank], output_device=opt.local_rank,
                     # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                     find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
+        
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
@@ -330,9 +333,10 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
+    torch.save(model, wdir / 'init.pt')
 
     if opt.teacher_weight:
-        dump_image = torch.zeros((1, 3, opt.imgsz, opt.imgsz), device=device)
+        dump_image = torch.zeros((1, 3, imgsz, imgsz), device=device) # FIX HERE
         targets = torch.Tensor([[0, 0, 0, 0, 0, 0]]).to(device)
         _, features, _ = model(dump_image, target=targets)  # forward
         _, teacher_feature, _ = teacher_model(dump_image, target=targets) 
@@ -342,9 +346,9 @@ def train(hyp, opt, device, tb_writer=None):
         
         stu_feature_adapt = nn.Sequential(nn.Conv2d(student_channel, teacher_channel, 3, padding=1, stride=int(student_out_size / teacher_out_size)), nn.ReLU()).to(device)
 
-    torch.save(model, wdir / 'init.pt')
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
+
         if opt.teacher_weight:
             teacher_model.eval()
 
@@ -399,12 +403,22 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Forward
             with amp.autocast(enabled=cuda):
-                pred = model(imgs)  # forward
-                if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
-                    loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
-                else:
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+                if opt.teacher_weight:
+                    targets = targets.to(device)
+                    pred, features, _ = model(imgs, target=targets)
+                    _, teacher_feature, mask = teacher_model(imgs, target=targets)
+                    if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+                        loss, loss_items = compute_loss_ota(pred, targets, imgs, teacher_feature.detach(), stu_feature_adapt(features), mask.detach())
+                    else:
+                        loss, loss_items = compute_loss(pred, targets, teacher_feature.detach(), stu_feature_adapt(features), mask.detach())
+                else: 
+                    pred = model(imgs)  # forward
+                    if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+                        loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
+                    else:
+                        loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 
+
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
@@ -569,7 +583,7 @@ def train(hyp, opt, device, tb_writer=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='yolov7.pt', help='initial weights path')
-    parser.add_argument('--teacher_weight', type=str, default= '', help='initial weights path')
+    parser.add_argument('--teacher_weight', type=str, default='yolov7x.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.p5.yaml', help='hyperparameters path')

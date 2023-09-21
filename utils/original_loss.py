@@ -418,14 +418,6 @@ class APLoss(torch.autograd.Function):
         g1, =ctx.saved_tensors
         return g1*out_grad1, None, None
 
-def imitation_loss(teacher, student, mask):
-    if student is None or teacher is None:
-        return 0
-    # print(teacher.shape, student.shape, mask.shape)
-    diff = torch.pow(student - teacher, 2) * mask
-    diff = diff.sum() / mask.sum() / 2
-
-    return diff
 
 class ComputeLoss:
     # Compute losses
@@ -455,7 +447,7 @@ class ComputeLoss:
         for k in 'na', 'nc', 'nl', 'anchors':
             setattr(self, k, getattr(det, k))
 
-    def __call__(self, p, targets, teacher=None, student=None, mask=0):  # predictions, targets, model
+    def __call__(self, p, targets):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
@@ -502,9 +494,7 @@ class ComputeLoss:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        lmask = imitation_loss(teacher, student, mask) * 0.01
-
-        loss = lbox + lobj + lcls + lmask
+        loss = lbox + lobj + lcls
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets):
@@ -589,7 +579,7 @@ class ComputeLossOTA:
         for k in 'na', 'nc', 'nl', 'anchors', 'stride':
             setattr(self, k, getattr(det, k))
 
-    def __call__(self, p, targets, imgs, teacher=None, student=None, mask=None):  # predictions, targets, model   
+    def __call__(self, p, targets, imgs):  # predictions, targets, model   
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         bs, as_, gjs, gis, targets, anchors = self.build_targets(p, targets, imgs)
@@ -642,9 +632,7 @@ class ComputeLossOTA:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        lmask = imitation_loss(teacher, student, mask) * 0.01
-
-        loss = lbox + lobj + lcls + lmask
+        loss = lbox + lobj + lcls
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets, imgs):
@@ -694,7 +682,7 @@ class ComputeLossOTA:
                 all_gj.append(gj)
                 all_gi.append(gi)
                 all_anch.append(anch[i][idx])
-                from_which_layer.append((torch.ones(size=(len(b),)) * i).to(device))
+                from_which_layer.append((torch.ones(size=(len(b),)) * i).to('cuda'))
                 
                 fg_pred = pi[b, a, gj, gi]                
                 p_obj.append(fg_pred[:, 4:5])
@@ -766,6 +754,7 @@ class ComputeLossOTA:
                 matching_matrix[:, anchor_matching_gt > 1] *= 0.0
                 matching_matrix[cost_argmin, anchor_matching_gt > 1] = 1.0
             fg_mask_inboxes = (matching_matrix.sum(0) > 0.0).to(device)
+            fg_mask_inboxes = fg_mask_inboxes.to(torch.device('cuda')) #fix here
             matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
         
             from_which_layer = from_which_layer[fg_mask_inboxes]
@@ -1019,7 +1008,7 @@ class ComputeLossBinOTA:
                 all_gj.append(gj)
                 all_gi.append(gi)
                 all_anch.append(anch[i][idx])
-                from_which_layer.append(torch.ones(size=(len(b),)) * i)
+                from_which_layer.append((torch.ones(size=(len(b),)) * i).to('cuda'))
                 
                 fg_pred = pi[b, a, gj, gi]                
                 p_obj.append(fg_pred[:, obj_idx:(obj_idx+1)])
@@ -1339,7 +1328,7 @@ class ComputeLossAuxOTA:
                 all_gj.append(gj)
                 all_gi.append(gi)
                 all_anch.append(anch[i][idx])
-                from_which_layer.append(torch.ones(size=(len(b),)) * i)
+                from_which_layer.append((torch.ones(size=(len(b),)) * i).to('cuda'))
                 
                 fg_pred = pi[b, a, gj, gi]                
                 p_obj.append(fg_pred[:, 4:5])
@@ -1492,7 +1481,7 @@ class ComputeLossAuxOTA:
                 all_gj.append(gj)
                 all_gi.append(gi)
                 all_anch.append(anch[i][idx])
-                from_which_layer.append(torch.ones(size=(len(b),)) * i)
+                from_which_layer.append((torch.ones(size=(len(b),)) * i).to('cuda'))
                 
                 fg_pred = pi[b, a, gj, gi]                
                 p_obj.append(fg_pred[:, 4:5])
