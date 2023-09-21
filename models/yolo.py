@@ -578,7 +578,71 @@ class Model(nn.Module):
         self.info()
         logger.info('')
 
-    def forward(self, x, augment=False, profile=False):
+    def _get_imitation_mask(self, x, targets, iou_factor=0.5):
+        """
+        gt_box: (B, K, 4) [x_min, y_min, x_max, y_max]
+        """
+        out_size = x.size(2)
+        batch_size = x.size(0)
+        device = targets.device
+
+        mask_batch = torch.zeros([batch_size, out_size, out_size])
+        
+        if not len(targets):
+            return mask_batch
+        
+        gt_boxes = [[] for i in range(batch_size)]
+        for i in range(len(targets)):
+            gt_boxes[int(targets[i, 0].data)] += [targets[i, 2:].clone().detach().unsqueeze(0)]
+        
+        max_num = 0
+        for i in range(batch_size):
+            max_num = max(max_num, len(gt_boxes[i]))
+            if len(gt_boxes[i]) == 0:
+                gt_boxes[i] = torch.zeros((1, 4), device=device)
+            else:
+                gt_boxes[i] = torch.cat(gt_boxes[i], 0)
+        
+        for i in range(batch_size):
+            # print(gt_boxes[i].device)
+            if max_num - gt_boxes[i].size(0):
+                gt_boxes[i] = torch.cat((gt_boxes[i], torch.zeros((max_num - gt_boxes[i].size(0), 4), device=device)), 0)
+            gt_boxes[i] = gt_boxes[i].unsqueeze(0)
+                
+        
+        gt_boxes = torch.cat(gt_boxes, 0)
+        gt_boxes *= out_size
+        
+        center_anchors = make_center_anchors(anchors_wh=self.anchors, grid_size=out_size, device=device)
+        anchors = center_to_corner(center_anchors).view(-1, 4)  # (N, 4)
+        
+        gt_boxes = center_to_corner(gt_boxes)
+
+        mask_batch = torch.zeros([batch_size, out_size, out_size], device=device)
+
+        for i in range(batch_size):
+            num_obj = gt_boxes[i].size(0)
+            if not num_obj:
+                continue
+             
+            IOU_map = find_jaccard_overlap(anchors, gt_boxes[i], 0).view(out_size, out_size, self.num_anchors, num_obj)
+            max_iou, _ = IOU_map.view(-1, num_obj).max(dim=0)
+            mask_img = torch.zeros([out_size, out_size], dtype=torch.int64, requires_grad=False).type_as(x)
+            threshold = max_iou * iou_factor
+
+            for k in range(num_obj):
+
+                mask_per_gt = torch.sum(IOU_map[:, :, :, k] > threshold[k], dim=2)
+
+                mask_img += mask_per_gt
+
+                mask_img += mask_img
+            mask_batch[i] = mask_img
+
+        mask_batch = mask_batch.clamp(0, 1)
+        return mask_batch  # (B, h, w)  
+
+    def forward(self, x, augment=False, profile=False, target=None):
         if augment:
             img_size = x.shape[-2:]  # height, width
             s = [1, 0.83, 0.67]  # scales
@@ -595,11 +659,19 @@ class Model(nn.Module):
                     yi[..., 0] = img_size[1] - yi[..., 0]  # de-flip lr
                 y.append(yi)
             return torch.cat(y, 1), None  # augmented inference, train
-        else:
-            return self.forward_once(x, profile)  # single-scale inference, train
+        # else:
+        #     return self.forward_once(x, profile)  # single-scale inference, train
+        
+        if target != None:
+            # x_center, y_center, width, height
+            preds, features = self._forward_once(x, profile, visualize, target)
+            mask = self._get_imitation_mask(features, target).unsqueeze(1)
+            return preds, features, mask
+        return self.forward_once(x, profile, target)  # single-scale inference, train
 
     def forward_once(self, x, profile=False, target=None):
         y, dt = [], []  # outputs
+        cnt = 0
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
@@ -623,8 +695,14 @@ class Model(nn.Module):
                 print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
 
             x = m(x)  # run
-            
+            if isinstance(m, Concat):
+                cnt += 1
+                if cnt == 15:
+                    feature = x
             y.append(x if m.i in self.save else None)  # save output
+
+        if target is not None:
+            return x, feature
 
         if profile:
             print('%.1fms total' % sum(dt))
