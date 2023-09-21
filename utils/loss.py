@@ -418,6 +418,14 @@ class APLoss(torch.autograd.Function):
         g1, =ctx.saved_tensors
         return g1*out_grad1, None, None
 
+def imitation_loss(teacher, student, mask):
+    if student is None or teacher is None:
+        return 0
+    # print(teacher.shape, student.shape, mask.shape)
+    diff = torch.pow(student - teacher, 2) * mask
+    diff = diff.sum() / mask.sum() / 2
+
+    return diff
 
 class ComputeLoss:
     # Compute losses
@@ -447,7 +455,7 @@ class ComputeLoss:
         for k in 'na', 'nc', 'nl', 'anchors':
             setattr(self, k, getattr(det, k))
 
-    def __call__(self, p, targets):  # predictions, targets, model
+    def __call__(self, p, targets, teacher=None, student=None, mask=None):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
@@ -494,7 +502,9 @@ class ComputeLoss:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        loss = lbox + lobj + lcls
+        lmask = imitation_loss(teacher, student, mask) * 0.01
+
+        loss = lbox + lobj + lcls + lmask
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets):
@@ -579,7 +589,7 @@ class ComputeLossOTA:
         for k in 'na', 'nc', 'nl', 'anchors', 'stride':
             setattr(self, k, getattr(det, k))
 
-    def __call__(self, p, targets, imgs):  # predictions, targets, model   
+    def __call__(self, p, targets, imgs, teacher=None, student=None, mask=None):  # predictions, targets, model   
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         bs, as_, gjs, gis, targets, anchors = self.build_targets(p, targets, imgs)
@@ -632,7 +642,8 @@ class ComputeLossOTA:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        loss = lbox + lobj + lcls
+        lmask = imitation_loss(teacher, student, mask) * 0.01
+        loss = lbox + lobj + lcls + lmask
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets, imgs):
