@@ -598,7 +598,7 @@ class Model(nn.Module):
         else:
             return self.forward_once(x, profile)  # single-scale inference, train
 
-    def forward_once(self, x, profile=False):
+    def forward_once(self, x, profile=False, target=None):
         y, dt = [], []  # outputs
         for m in self.model:
             if m.f != -1:  # if not from previous layer
