@@ -14,6 +14,9 @@ from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, s
     select_device, copy_attr
 from utils.original_loss import SigmoidBin
 
+from utils.anchor import make_center_anchors
+from utils.mask import center_to_corner, find_jaccard_overlap, corner_to_center
+
 try:
     import thop  # for FLOPS computation
 except ImportError:
@@ -508,6 +511,9 @@ class IBin(nn.Module):
 class Model(nn.Module):
     def __init__(self, cfg='yolor-csp-c.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         super(Model, self).__init__()
+        self.anchors = [(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
+                        (11.2364, 10.0071)]
+        self.num_anchors = len(self.anchors)
         self.traced = False
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
@@ -664,7 +670,7 @@ class Model(nn.Module):
         
         if target != None:
             # x_center, y_center, width, height
-            preds, features = self._forward_once(x, profile, visualize, target)
+            preds, features = self.forward_once(x, profile, target)
             mask = self._get_imitation_mask(features, target).unsqueeze(1)
             return preds, features, mask
         return self.forward_once(x, profile, target)  # single-scale inference, train
