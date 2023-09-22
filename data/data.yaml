@@ -1,0 +1,22 @@
+# train: data/train/images
+# val: data/val/images
+# test: data/val/images
+
+# # number of classes
+# nc: 28
+
+# # class names 
+# names: ['assam macaque', 'yellow-throated marten', "pallas's squirrel", 'chinese serow',
+#         "roosevelt's muntjac", 'chevrotain', 'wild boar', 'northern treeshrew', 'large indian civet',
+#         'annamite striped rabbit', 'giant muntjac', 'malayan porcupine', 'red junglefowl', 
+#         'asian palm civet', 'empty', 'asiatic brush-tailed porcupine', 'ferret-badger', 
+#         'spotted linsang', 'grey peacock-pheasant', 'masked palm civet', 'crab-eating mongoose', 
+#         'stump-tailed macaque', 'red-shanked douc', 'pig-tailed macaque', 'sambar', 'silver pheasant', 
+#         'red-cheeked squirrel', 'red muntjac']
+
+
+train: aiforiot_train_v1/data/train/images
+val: aiforiot_train_v1/data/val/images
+test: aiforiot_train_v1/data/val/images
+nc: 27
+names: ['assam macaque', 'yellow-throated marten', "pallas's squirrel", 'chinese serow', "roosevelt's muntjac", 'chevrotain', 'wild boar', 'northern treeshrew', 'large indian civet', 'annamite striped rabbit', 'giant muntjac', 'malayan porcupine', 'red junglefowl', 'asian palm civet', 'asiatic brush-tailed porcupine', 'ferret-badger', 'spotted linsang', 'grey peacock-pheasant', 'masked palm civet', 'crab-eating mongoose', 'stump-tailed macaque', 'red-shanked douc', 'pig-tailed macaque', 'sambar', 'silver pheasant', 'red-cheeked squirrel', 'red muntjac']
