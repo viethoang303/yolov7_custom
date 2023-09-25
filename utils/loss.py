@@ -423,8 +423,10 @@ def imitation_loss(teacher, student, mask):
         return 0
     # print(teacher.shape, student.shape, mask.shape)
     diff = torch.pow(student.cuda() - teacher.cuda(), 2) * mask.cuda()
+    # print("DIFF", diff.sum(), mask.max())
+    if mask.sum()==0:
+        return 0
     diff = diff.sum() / mask.sum() / 2
-
     return diff
 
 class ComputeLoss:
