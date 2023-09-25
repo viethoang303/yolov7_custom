@@ -703,7 +703,7 @@ class Model(nn.Module):
             x = m(x)  # run
             if isinstance(m, Concat):
                 cnt += 1
-                if cnt == 15:
+                if cnt == 17:
                     feature = x
             y.append(x if m.i in self.save else None)  # save output
 
