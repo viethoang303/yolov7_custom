@@ -513,6 +513,13 @@ class Model(nn.Module):
         super(Model, self).__init__()
         self.anchors = [(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
                         (11.2364, 10.0071)]
+        if cfg.split("/")[-1] in ["yolov7.yaml", "yolov7x.yaml"]: 
+            self.type = "p5"
+        elif cfg.split("/")[-1] in ["yolov7-w6.yaml", "yolov7-e6.yaml", "yolov7-d6.yaml"]: 
+            self.type = "p6"
+        else: 
+            self.type = "e6e"
+        print("TYPE", self.type, cfg)
         self.num_anchors = len(self.anchors)
         self.traced = False
         if isinstance(cfg, dict):
@@ -703,8 +710,11 @@ class Model(nn.Module):
             x = m(x)  # run
             if isinstance(m, Concat):
                 cnt += 1
-                if cnt == 17:
-                    feature = x
+                if self.type=="p5" and cnt==15: feature = x
+                elif self.type=="p6" and cnt==17: feature = x
+                elif self.type=="e6e" and cnt==28: feature = x
+                # if cnt == 17:
+                #     feature = x
             y.append(x if m.i in self.save else None)  # save output
 
         if target is not None:
